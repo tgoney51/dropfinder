@@ -16,6 +16,7 @@
  */
 package com.mrmain21.dropfinder;
 
+import java.awt.Color;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import net.runelite.client.config.Config;
@@ -35,6 +36,16 @@ public interface DropFinderConfig extends Config
 	default Keybind searchHotkey()
 	{
 		return new Keybind(KeyEvent.VK_P, InputEvent.CTRL_DOWN_MASK);
+	}
+
+	@ConfigItem(
+		keyName = "headerColor",
+		name = "Category header colour",
+		description = "Colour of the collapsible category headers (NPCs, Chests, ...)"
+	)
+	default Color headerColor()
+	{
+		return Color.YELLOW;
 	}
 
 	@ConfigSection(

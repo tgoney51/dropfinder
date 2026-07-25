@@ -290,6 +290,95 @@ class DropFinderPanel extends PluginPanel
 		return img.getScaledInstance(w, h, Image.SCALE_SMOOTH);
 	}
 
+	// ---------- collapsible category sections ----------
+
+	private static final String[] SECTION_ORDER =
+		{"NPCs", "Chests", "Clue scrolls", "Minigames", "Events", "Other"};
+
+	private static String displayCategory(String sourceName, int level)
+	{
+		if (level > 0)
+		{
+			return "NPCs";
+		}
+		switch (category(sourceName))
+		{
+			case CHEST:
+				return "Chests";
+			case CLUE:
+				return "Clue scrolls";
+			case MINIGAME:
+				return "Minigames";
+			case EVENT:
+				return "Events";
+			default:
+				return "Other";
+		}
+	}
+
+	private void renderSections(Map<String, List<JPanel>> sections)
+	{
+		for (final String cat : SECTION_ORDER)
+		{
+			final List<JPanel> rows = sections.get(cat);
+			if (rows != null && !rows.isEmpty())
+			{
+				addSection(cat, rows);
+			}
+		}
+	}
+
+	/**
+	 * Adds a collapsible category section: a large coloured header that toggles
+	 * the visibility of its rows. Sections start expanded.
+	 */
+	private void addSection(String title, List<JPanel> rows)
+	{
+		final JPanel content = new JPanel();
+		content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+		content.setOpaque(false);
+		content.setAlignmentX(Component.LEFT_ALIGNMENT);
+		for (final JPanel r : rows)
+		{
+			content.add(r);
+		}
+
+		final JLabel header = new JLabel();
+		header.setFont(FontManager.getRunescapeBoldFont().deriveFont(16f));
+		header.setForeground(config.headerColor());
+		header.setBorder(BorderFactory.createEmptyBorder(7, 2, 3, 2));
+
+		final boolean[] open = {true};
+		final Runnable relabel = () ->
+			header.setText((open[0] ? "[-] " : "[+] ") + title + "  (" + rows.size() + ")");
+		relabel.run();
+
+		final MouseAdapter toggle = new MouseAdapter()
+		{
+			@Override
+			public void mouseClicked(MouseEvent e)
+			{
+				open[0] = !open[0];
+				content.setVisible(open[0]);
+				relabel.run();
+				resultsPanel.revalidate();
+				resultsPanel.repaint();
+			}
+		};
+
+		final JPanel headerRow = new JPanel(new BorderLayout());
+		headerRow.setOpaque(false);
+		headerRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+		headerRow.setCursor(new Cursor(Cursor.HAND_CURSOR));
+		headerRow.add(header, BorderLayout.WEST);
+		headerRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, header.getPreferredSize().height + 10));
+		headerRow.addMouseListener(toggle);
+		header.addMouseListener(toggle);
+
+		resultsPanel.add(headerRow);
+		resultsPanel.add(content);
+	}
+
 	private void showSingleItem(String item, List<WikiDropClient.Drop> allDrops)
 	{
 		final List<WikiDropClient.Drop> drops = new ArrayList<>();
@@ -307,10 +396,13 @@ class DropFinderPanel extends PluginPanel
 			+ drops.size() + (drops.size() == 1 ? " source" : " sources") + "</html>");
 
 		resultsPanel.add(buildHeader(item));
+		final Map<String, List<JPanel>> sections = new LinkedHashMap<>();
 		for (final WikiDropClient.Drop drop : drops)
 		{
-			resultsPanel.add(buildRow(drop));
+			sections.computeIfAbsent(displayCategory(drop.getMonster(), drop.getCombatLevel()),
+				k -> new ArrayList<>()).add(buildRow(drop));
 		}
+		renderSections(sections);
 	}
 
 	private void showGrouped(String query, List<String> items, Map<String, List<WikiDropClient.Drop>> map)
@@ -355,10 +447,13 @@ class DropFinderPanel extends PluginPanel
 
 		statusLabel.setText("<html><b>" + escape(query) + "</b> — " + items.size()
 			+ " items, " + sorted.size() + " sources</html>");
+		final Map<String, List<JPanel>> sections = new LinkedHashMap<>();
 		for (final Group g : sorted)
 		{
-			resultsPanel.add(buildGroupRow(g));
+			sections.computeIfAbsent(displayCategory(g.name, g.level),
+				k -> new ArrayList<>()).add(buildGroupRow(g));
 		}
+		renderSections(sections);
 	}
 
 	/** Aggregates the matched item types dropped by one source. */
