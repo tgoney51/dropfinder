@@ -233,7 +233,7 @@ class DropFinderPanel extends PluginPanel
 		final List<WikiDropClient.Drop> drops = new ArrayList<>();
 		for (final WikiDropClient.Drop drop : allDrops)
 		{
-			if (sourceAllowed(drop.getMonster()))
+			if (sourceAllowed(drop.getMonster(), drop.getCombatLevel()))
 			{
 				drops.add(drop);
 			}
@@ -255,7 +255,7 @@ class DropFinderPanel extends PluginPanel
 		{
 			for (final WikiDropClient.Drop drop : map.getOrDefault(item, List.of()))
 			{
-				if (!sourceAllowed(drop.getMonster()))
+				if (!sourceAllowed(drop.getMonster(), drop.getCombatLevel()))
 				{
 					continue;
 				}
@@ -482,15 +482,82 @@ class DropFinderPanel extends PluginPanel
 		return -1;
 	}
 
-	private boolean sourceAllowed(String sourceName)
+	/**
+	 * Whether a source passes the current category filters. Monsters (combat
+	 * level &gt; 0) are never hidden here; only non-combat sources (chests,
+	 * clue caskets, minigame rewards, event drops) are classified and filtered.
+	 * Classification is name-heuristic and easy to extend.
+	 */
+	private boolean sourceAllowed(String sourceName, int level)
 	{
-		return config.showChests() || !isChest(sourceName);
+		if (level > 0)
+		{
+			return true;
+		}
+		switch (category(sourceName))
+		{
+			case CLUE:
+				return config.showClues();
+			case CHEST:
+				return config.showChests();
+			case MINIGAME:
+				return config.showMinigames();
+			case EVENT:
+				return config.showEvents();
+			default:
+				return true;
+		}
 	}
 
-	private static boolean isChest(String sourceName)
+	private enum Cat { CHEST, CLUE, MINIGAME, EVENT, OTHER }
+
+	private static final String[] EVENT_WORDS = {
+		"event", "christmas", "halloween", "easter", "birthday", "valentine",
+		"yule", "anniversary", "holiday", "diwali"
+	};
+
+	private static final String[] MINIGAME_WORDS = {
+		"barbarian assault", "pest control", "nightmare zone", "fishing trawler",
+		"tempoross", "wintertodt", "guardians of the rift", "soul wars", "gauntlet",
+		"fight cave", "inferno", "castle wars", "last man standing", "mahogany homes",
+		"volcanic mine", "trouble brewing", "gnome restaurant", "rogues' den",
+		"hallowed sepulchre", "sepulchre", "agility dispenser", "pyramid plunder",
+		"tithe farm", "temple trek", "shades of mort", "mage arena", "brimhaven agility",
+		"giants' foundry", "giants foundry", "blast furnace", "colosseum"
+	};
+
+	private static Cat category(String sourceName)
 	{
 		final String n = sourceName.toLowerCase();
-		return n.contains("chest") || n.contains("casket");
+		if (n.contains("clue") || n.contains("casket"))
+		{
+			return Cat.CLUE;
+		}
+		if (n.contains("chest"))
+		{
+			return Cat.CHEST;
+		}
+		if (containsAny(n, EVENT_WORDS))
+		{
+			return Cat.EVENT;
+		}
+		if (containsAny(n, MINIGAME_WORDS))
+		{
+			return Cat.MINIGAME;
+		}
+		return Cat.OTHER;
+	}
+
+	private static boolean containsAny(String haystack, String[] needles)
+	{
+		for (final String needle : needles)
+		{
+			if (haystack.contains(needle))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static String qtySuffix(String qty)

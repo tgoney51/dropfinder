@@ -47,10 +47,43 @@ public interface DropFinderConfig extends Config
 	@ConfigItem(
 		keyName = "showChests",
 		name = "Chests",
-		description = "Include chest / reward-casket sources in results",
+		description = "Include chest sources (e.g. raid / boss reward chests)",
 		section = filters
 	)
 	default boolean showChests()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "showClues",
+		name = "Clue scrolls",
+		description = "Include clue scroll / reward casket sources",
+		section = filters
+	)
+	default boolean showClues()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "showMinigames",
+		name = "Minigames",
+		description = "Include minigame reward sources",
+		section = filters
+	)
+	default boolean showMinigames()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "showEvents",
+		name = "Events",
+		description = "Include seasonal / holiday event sources",
+		section = filters
+	)
+	default boolean showEvents()
 	{
 		return true;
 	}
