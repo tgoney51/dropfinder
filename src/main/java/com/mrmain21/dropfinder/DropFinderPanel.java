@@ -23,10 +23,13 @@ import java.awt.Container;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Image;
 import java.awt.Point;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -36,6 +39,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
+import javax.swing.ImageIcon;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -68,6 +72,21 @@ class DropFinderPanel extends PluginPanel
 	private String lastQuery = "";
 	/** Guards against stale async responses overwriting a newer search. */
 	private int searchSeq = 0;
+
+	/** Source rows awaiting their wiki thumbnail, rebuilt each render. */
+	private final List<IconTarget> iconTargets = new ArrayList<>();
+
+	private static final class IconTarget
+	{
+		private final String name;
+		private final JLabel label;
+
+		IconTarget(String name, JLabel label)
+		{
+			this.name = name;
+			this.label = label;
+		}
+	}
 
 	DropFinderPanel(WikiDropClient wikiClient, ItemManager itemManager, DropFinderConfig config)
 	{
@@ -216,6 +235,7 @@ class DropFinderPanel extends PluginPanel
 		Map<String, List<WikiDropClient.Drop>> map)
 	{
 		resultsPanel.removeAll();
+		iconTargets.clear();
 		if (single)
 		{
 			final String item = items.get(0);
@@ -226,6 +246,48 @@ class DropFinderPanel extends PluginPanel
 			showGrouped(query, items, map);
 		}
 		revalidateResults();
+		loadSourceIcons(searchSeq);
+	}
+
+	/** Fetch + apply the little wiki thumbnail for each source row, async. */
+	private void loadSourceIcons(int seq)
+	{
+		if (iconTargets.isEmpty())
+		{
+			return;
+		}
+		final Set<String> names = new LinkedHashSet<>();
+		for (final IconTarget t : iconTargets)
+		{
+			names.add(t.name);
+		}
+		wikiClient.fetchIconUrls(names, () -> SwingUtilities.invokeLater(() ->
+		{
+			if (seq != searchSeq)
+			{
+				return;
+			}
+			for (final IconTarget t : iconTargets)
+			{
+				final JLabel label = t.label;
+				wikiClient.loadIcon(t.name, img -> SwingUtilities.invokeLater(() ->
+				{
+					if (seq == searchSeq && img != null)
+					{
+						label.setIcon(new ImageIcon(scaleIcon(img)));
+					}
+				}));
+			}
+		}));
+	}
+
+	private static Image scaleIcon(BufferedImage img)
+	{
+		final int max = 22;
+		final double s = Math.min((double) max / img.getWidth(), (double) max / img.getHeight());
+		final int w = Math.max(1, (int) Math.round(img.getWidth() * s));
+		final int h = Math.max(1, (int) Math.round(img.getHeight() * s));
+		return img.getScaledInstance(w, h, Image.SCALE_SMOOTH);
 	}
 
 	private void showSingleItem(String item, List<WikiDropClient.Drop> allDrops)
@@ -238,6 +300,9 @@ class DropFinderPanel extends PluginPanel
 				drops.add(drop);
 			}
 		}
+		// NPCs first, then chests/objects; the list is already rarity-sorted, and
+		// this stable sort keeps that order within each group.
+		drops.sort(Comparator.comparingInt(d -> d.getCombatLevel() > 0 ? 0 : 1));
 		statusLabel.setText("<html><b>" + escape(item) + "</b> — "
 			+ drops.size() + (drops.size() == 1 ? " source" : " sources") + "</html>");
 
@@ -346,7 +411,9 @@ class DropFinderPanel extends PluginPanel
 	private JPanel buildRow(WikiDropClient.Drop drop)
 	{
 		final JPanel row = newRow();
-		row.add(nameLevelLine(drop.getMonster(), drop.getCombatLevel()));
+		final JLabel icon = newIconLabel();
+		iconTargets.add(new IconTarget(drop.getMonster(), icon));
+		row.add(nameLevelLine(icon, drop.getMonster(), drop.getCombatLevel()));
 
 		final String detailText = (formatRarity(drop.getRarity()) + qtySuffix(drop.getQuantity())).trim();
 		if (!detailText.isEmpty())
@@ -365,7 +432,9 @@ class DropFinderPanel extends PluginPanel
 	private JPanel buildGroupRow(Group g)
 	{
 		final JPanel row = newRow();
-		row.add(nameLevelLine(g.name, g.level));
+		final JLabel icon = newIconLabel();
+		iconTargets.add(new IconTarget(g.name, icon));
+		row.add(nameLevelLine(icon, g.name, g.level));
 
 		for (final Map.Entry<String, String> e : g.types.entrySet())
 		{
@@ -397,11 +466,13 @@ class DropFinderPanel extends PluginPanel
 		return row;
 	}
 
-	private static JPanel nameLevelLine(String sourceName, int level)
+	private static JPanel nameLevelLine(JLabel icon, String sourceName, int level)
 	{
-		final JPanel line = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+		final JPanel line = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
 		line.setOpaque(false);
 		line.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		line.add(icon);
 
 		final JLabel name = new JLabel(sourceName);
 		name.setForeground(Color.WHITE);
@@ -409,11 +480,20 @@ class DropFinderPanel extends PluginPanel
 
 		if (level > 0)
 		{
-			final JLabel lvl = new JLabel("   Lvl " + level);
+			final JLabel lvl = new JLabel("Lvl " + level);
 			lvl.setForeground(new Color(0xC8, 0xC8, 0xC8));
 			line.add(lvl);
 		}
 		return line;
+	}
+
+	/** A fixed-size placeholder label the source thumbnail loads into. */
+	private static JLabel newIconLabel()
+	{
+		final JLabel icon = new JLabel();
+		icon.setPreferredSize(new Dimension(24, 24));
+		icon.setHorizontalAlignment(SwingConstants.CENTER);
+		return icon;
 	}
 
 	private void finishRow(JPanel row, String wikiTarget)

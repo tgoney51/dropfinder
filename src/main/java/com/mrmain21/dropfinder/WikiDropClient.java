@@ -17,9 +17,12 @@
 package com.mrmain21.dropfinder;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.imageio.ImageIO;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.Getter;
@@ -35,6 +39,7 @@ import lombok.extern.slf4j.Slf4j;
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.FormBody;
+import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -68,6 +73,10 @@ public class WikiDropClient
 	private final OkHttpClient okHttpClient;
 	private final Gson gson;
 	private final Map<String, List<Drop>> cache = new ConcurrentHashMap<>();
+	/** source name (lower) -> wiki thumbnail URL ("" = no image). */
+	private final Map<String, String> iconUrls = new ConcurrentHashMap<>();
+	/** thumbnail URL -> decoded image. */
+	private final Map<String, BufferedImage> iconImages = new ConcurrentHashMap<>();
 
 	@Inject
 	WikiDropClient(OkHttpClient okHttpClient, Gson gson)
@@ -165,6 +174,167 @@ public class WikiDropClient
 					log.debug("Drop parse failed", ex);
 					onError.accept("Couldn't read the wiki response.");
 				}
+			}
+		});
+	}
+
+	// ---------- source icons (wiki thumbnails) ----------
+
+	/**
+	 * Resolves wiki thumbnail URLs for the given source names (monsters, chests,
+	 * caskets, ...) in batches, caching them. {@code onDone} runs once all are
+	 * resolved. Names already known are skipped.
+	 */
+	public void fetchIconUrls(Collection<String> names, Runnable onDone)
+	{
+		final List<String> missing = new ArrayList<>();
+		for (final String n : names)
+		{
+			if (!iconUrls.containsKey(n.toLowerCase()))
+			{
+				missing.add(n);
+			}
+		}
+		if (missing.isEmpty())
+		{
+			onDone.run();
+			return;
+		}
+		fetchIconBatch(missing, 0, onDone);
+	}
+
+	private void fetchIconBatch(List<String> missing, int from, Runnable onDone)
+	{
+		if (from >= missing.size())
+		{
+			onDone.run();
+			return;
+		}
+		final List<String> batch = missing.subList(from, Math.min(from + 50, missing.size()));
+		final HttpUrl url = HttpUrl.parse(API).newBuilder()
+			.addQueryParameter("action", "query")
+			.addQueryParameter("format", "json")
+			.addQueryParameter("prop", "pageimages")
+			.addQueryParameter("piprop", "thumbnail")
+			.addQueryParameter("pithumbsize", "32")
+			.addQueryParameter("redirects", "1")
+			.addQueryParameter("titles", String.join("|", batch))
+			.build();
+		final Request request = new Request.Builder()
+			.url(url).header("User-Agent", USER_AGENT).get().build();
+
+		okHttpClient.newCall(request).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException e)
+			{
+				markMissing(batch);
+				fetchIconBatch(missing, from + 50, onDone);
+			}
+
+			@Override
+			public void onResponse(Call call, Response response)
+			{
+				try (Response r = response)
+				{
+					if (r.isSuccessful() && r.body() != null)
+					{
+						final JsonObject root = gson.fromJson(r.body().string(), JsonObject.class);
+						final JsonObject query = root.getAsJsonObject("query");
+						final Map<String, String> byTitle = new LinkedHashMap<>();
+						if (query != null && query.has("pages"))
+						{
+							for (final Map.Entry<String, JsonElement> e : query.getAsJsonObject("pages").entrySet())
+							{
+								final JsonObject page = e.getValue().getAsJsonObject();
+								if (!page.has("title"))
+								{
+									continue;
+								}
+								String thumb = "";
+								if (page.has("thumbnail"))
+								{
+									thumb = page.getAsJsonObject("thumbnail").get("source").getAsString();
+								}
+								byTitle.put(page.get("title").getAsString().toLowerCase(), thumb);
+							}
+						}
+						for (final String n : batch)
+						{
+							iconUrls.put(n.toLowerCase(), byTitle.getOrDefault(n.toLowerCase(), ""));
+						}
+					}
+					else
+					{
+						markMissing(batch);
+					}
+				}
+				catch (Exception ex)
+				{
+					markMissing(batch);
+				}
+				fetchIconBatch(missing, from + 50, onDone);
+			}
+		});
+	}
+
+	private void markMissing(List<String> batch)
+	{
+		for (final String n : batch)
+		{
+			iconUrls.putIfAbsent(n.toLowerCase(), "");
+		}
+	}
+
+	/**
+	 * Loads the thumbnail image for a source (must have been resolved via
+	 * {@link #fetchIconUrls}). Delivers null if there is no image. Cached.
+	 */
+	public void loadIcon(String sourceName, Consumer<BufferedImage> onDone)
+	{
+		final String url = iconUrls.get(sourceName.toLowerCase());
+		if (url == null || url.isEmpty())
+		{
+			onDone.accept(null);
+			return;
+		}
+		final BufferedImage cached = iconImages.get(url);
+		if (cached != null)
+		{
+			onDone.accept(cached);
+			return;
+		}
+		final Request request = new Request.Builder()
+			.url(url).header("User-Agent", USER_AGENT).get().build();
+		okHttpClient.newCall(request).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException e)
+			{
+				onDone.accept(null);
+			}
+
+			@Override
+			public void onResponse(Call call, Response response)
+			{
+				try (Response r = response)
+				{
+					if (r.isSuccessful() && r.body() != null)
+					{
+						final BufferedImage img = ImageIO.read(r.body().byteStream());
+						if (img != null)
+						{
+							iconImages.put(url, img);
+							onDone.accept(img);
+							return;
+						}
+					}
+				}
+				catch (Exception ignored)
+				{
+					// fall through to null
+				}
+				onDone.accept(null);
 			}
 		});
 	}
