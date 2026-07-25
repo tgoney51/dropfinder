@@ -95,7 +95,6 @@ class GhostTextField extends JTextField
 			@Override
 			public void actionPerformed(ActionEvent e)
 			{
-				acceptGhost();
 				fireSearch();
 			}
 		});
@@ -167,7 +166,7 @@ class GhostTextField extends JTextField
 
 	void fireSearch()
 	{
-		onSearch.accept(getCompletedText().trim());
+		onSearch.accept(getText().trim());
 	}
 
 	@Override
